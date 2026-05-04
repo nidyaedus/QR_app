@@ -1,13 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import styles from './BaristaUI.module.css';
 import { Branch } from '@prisma/client';
 import { getActiveOrders, updateOrderStatus } from '../actions/orders';
 
 type OrderWithDetails = {
   id: string;
+  orderNumber: string | null;
   status: string;
+  paymentStatus: string;
+  totalAmount: number;
   createdAt: Date;
   user: { name: string };
   items: {
@@ -21,16 +24,16 @@ type OrderWithDetails = {
 export default function BaristaUI({ branch }: { branch: Branch }) {
   const [orders, setOrders] = useState<OrderWithDetails[]>([]);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     const data = await getActiveOrders(branch.id);
     setOrders(data as any);
-  };
+  }, [branch.id]);
 
   useEffect(() => {
     fetchOrders();
     const interval = setInterval(fetchOrders, 5000); // Polling every 5s
     return () => clearInterval(interval);
-  }, [branch.id]);
+  }, [fetchOrders]);
 
   const handleStatusChange = async (orderId: string, nextStatus: string) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: nextStatus } : o));
@@ -64,10 +67,16 @@ export default function BaristaUI({ branch }: { branch: Branch }) {
               {orders.filter(o => o.status === col.id).map(order => (
                 <div key={order.id} className={styles.ticket}>
                   <div className={styles.ticketHeader}>
-                    <strong>#{order.id.slice(-4).toUpperCase()}</strong>
+                    <strong>#{order.orderNumber || order.id.slice(-4).toUpperCase()}</strong>
                     <span>{new Date(order.createdAt).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'})}</span>
                   </div>
                   <p className={styles.customerName}>{order.user.name}</p>
+                  <div className={styles.paymentRow}>
+                    <span>{order.totalAmount} TL</span>
+                    <span className={order.paymentStatus === 'PAID' ? styles.paidBadge : styles.counterBadge}>
+                      {order.paymentStatus === 'PAID' ? 'Ödendi' : 'Kasada ödeme'}
+                    </span>
+                  </div>
                   
                   <ul className={styles.itemList}>
                     {order.items.map((item, idx) => (

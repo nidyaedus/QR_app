@@ -39,16 +39,23 @@ model Product {
 }
 
 model Order {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  branchId    String
-  branch      Branch   @relation(fields: [branchId], references: [id])
-  status      String   @default("RECEIVED") // RECEIVED, PREPARING, READY, DELIVERED
-  totalAmount Float
-  items       OrderItem[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  orderNumber   String?
+  orderDate     String?
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id])
+  status        String   @default("RECEIVED") // RECEIVED, PREPARING, READY, DELIVERED
+  paymentMethod String   @default("IN_STORE")
+  paymentStatus String   @default("PAY_AT_COUNTER")
+  paidAt        DateTime?
+  totalAmount   Float
+  items         OrderItem[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([branchId, orderDate, orderNumber])
 }
 
 model OrderItem {

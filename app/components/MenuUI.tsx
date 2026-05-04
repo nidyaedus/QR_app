@@ -4,23 +4,22 @@ import { useState } from 'react';
 import styles from './MenuUI.module.css';
 import { Product, Branch } from '@prisma/client';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useCart } from '../context/CartContext';
 
-export default function MenuUI({ branch, products }: { branch: Branch, products: Product[] }) {
+export default function MenuUI({ branch, products }: { branch: Branch; products: Product[] }) {
   const { cart, addToCart, cartTotal } = useCart();
-  const [activeCategory, setActiveCategory] = useState<string>('Coffee');
+  const categories = Array.from(new Set(products.map(product => product.category)));
+  const [activeCategory, setActiveCategory] = useState<string>(categories[0] || '');
 
-  const categories = Array.from(new Set(products.map(p => p.category)));
-
-  const getFilteredProducts = () => products.filter(p => p.category === activeCategory);
-
+  const filteredProducts = products.filter(product => product.category === activeCategory);
   const cartItemCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
   return (
     <div className={styles.container}>
       <header className={styles.header}>
         <div className={styles.branchHeader}>
-          <Link href="/" className={styles.backButton}>‹</Link>
+          <Link href="/" className={styles.backButton}>{'<'}</Link>
           <div>
             <h2>{branch.name}</h2>
             <p className={styles.categoryPills}>Menü</p>
@@ -29,26 +28,38 @@ export default function MenuUI({ branch, products }: { branch: Branch, products:
       </header>
 
       <div className={styles.categories}>
-        {categories.map(cat => (
-          <button 
-            key={cat} 
-            className={cat === activeCategory ? styles.activeCategory : styles.categoryBtn}
-            onClick={() => setActiveCategory(cat)}
+        {categories.map(category => (
+          <button
+            key={category}
+            className={category === activeCategory ? styles.activeCategory : styles.categoryBtn}
+            onClick={() => setActiveCategory(category)}
           >
-            {cat}
+            {category}
           </button>
         ))}
       </div>
 
       <main className={styles.productGrid}>
-        {getFilteredProducts().map(product => (
+        {filteredProducts.map(product => (
           <div key={product.id} className={styles.productCard}>
+            {product.imageUrl && (
+              <Image
+                src={product.imageUrl}
+                alt={product.name}
+                className={styles.productImage}
+                width={184}
+                height={184}
+                loading="lazy"
+              />
+            )}
             <div className={styles.productInfo}>
               <h3>{product.name}</h3>
               <p>{product.description}</p>
               <span className={styles.price}>{product.price} TL</span>
             </div>
-            <button className={styles.addBtn} onClick={() => addToCart(product)}>+</button>
+            <button className={styles.addBtn} onClick={() => addToCart(product)} aria-label={`${product.name} sepete ekle`}>
+              +
+            </button>
           </div>
         ))}
       </main>

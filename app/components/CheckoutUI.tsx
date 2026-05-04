@@ -13,10 +13,12 @@ export default function CheckoutUI({ branch }: { branch: Branch }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>('');
   const router = useRouter();
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     setLoading(true);
 
     const res = await processCheckout({
@@ -33,7 +35,7 @@ export default function CheckoutUI({ branch }: { branch: Branch }) {
       clearCart();
       router.push(`/${branch.id}/success?orderId=${res.orderId}&stamps=${res.newStampCount}`);
     } else {
-      alert('Sipariş oluşturulamadı. Lütfen tekrar deneyin.');
+      setError(res.error || 'Sipariş oluşturulamadı. Lütfen tekrar deneyin.');
     }
   };
 
@@ -49,7 +51,7 @@ export default function CheckoutUI({ branch }: { branch: Branch }) {
   return (
     <div className={styles.container}>
       <header className={styles.header}>
-        <Link href={`/${branch.id}/menu`} className={styles.headerBack}>‹</Link>
+        <Link href={`/${branch.id}/menu`} className={styles.headerBack}>{'<'}</Link>
         <h1>Sepetim</h1>
       </header>
 
@@ -71,36 +73,39 @@ export default function CheckoutUI({ branch }: { branch: Branch }) {
         </section>
 
         <section className={styles.paymentSection}>
-          <h2>Bilgileriniz (Iyzico Sandbox)</h2>
+          <h2>Teslimat Bilgileri</h2>
+
+          {error && (
+            <div className={styles.errorMessage}>
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handleCheckout} className={styles.form}>
-            <input 
-              type="text" 
-              placeholder="Ad Soyad" 
+            <input
+              type="text"
+              placeholder="Ad Soyad"
               value={name}
               onChange={e => setName(e.target.value)}
-              required 
+              required
               className={styles.input}
             />
-            <input 
-              type="tel" 
-              placeholder="Telefon Numarası (Örn: 5551234567)" 
+            <input
+              type="tel"
+              placeholder="Telefon Numarası"
               value={phone}
               onChange={e => setPhone(e.target.value)}
-              required 
+              required
               className={styles.input}
             />
-            
-            <div className={styles.fakeCard}>
-              <p className={styles.cardHeader}>Kredi Kartı (Örnek Görünüm)</p>
-              <input type="text" placeholder="Kart Numarası" className={styles.input} required defaultValue="4353 0000 0000 0000" />
-              <div className={styles.cardInfo}>
-                <input type="text" placeholder="AA/YY" className={styles.input} required defaultValue="12/26"/>
-                <input type="text" placeholder="CVC" className={styles.input} required defaultValue="123"/>
-              </div>
+
+            <div className={styles.pickupNotice}>
+              <strong>Ödeme şubede alınacak.</strong>
+              <span>Siparişiniz barista ekranına düşünce hazırlanmaya başlar.</span>
             </div>
 
             <button type="submit" className={styles.submitBtn} disabled={loading}>
-              {loading ? 'İşleniyor...' : `${cartTotal} TL Öde`}
+              {loading ? 'İşleniyor...' : `${cartTotal} TL Siparişi Ver`}
             </button>
           </form>
         </section>

@@ -24,7 +24,12 @@ export async function updateOrderStatus(orderId: string, status: string) {
   try {
     await prisma.order.update({
       where: { id: orderId },
-      data: { status }
+      data: {
+        status,
+        ...(status === 'DELIVERED'
+          ? { paymentStatus: 'PAID', paidAt: new Date() }
+          : {})
+      }
     });
     return { success: true };
   } catch (e) {

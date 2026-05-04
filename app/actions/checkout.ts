@@ -1,148 +1,210 @@
 'use server';
 
 import { prisma } from '@/lib/prisma';
-import Iyzipay from 'iyzipay';
 
-const iyzipay = new Iyzipay({
-  apiKey: process.env.IYZICO_API_KEY || '',
-  secretKey: process.env.IYZICO_SECRET_KEY || '',
-  uri: process.env.IYZICO_BASE_URL || 'https://sandbox-api.iyzipay.com'
-});
+type CartItemInput = {
+  productId: string;
+  quantity: number;
+};
+
+function normalizePhone(phone: string) {
+  const digits = phone.replace(/\D/g, '');
+
+  if (digits.length === 10) {
+    return `+90${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return `+90${digits.slice(1)}`;
+  }
+
+  if (digits.length === 12 && digits.startsWith('90')) {
+    return `+${digits}`;
+  }
+
+  if (digits.length >= 10) {
+    return `+${digits}`;
+  }
+
+  throw new Error('Telefon numarası geçersiz.');
+}
+
+function mergeCartItems(cart: CartItemInput[]) {
+  const merged = new Map<string, number>();
+
+  for (const item of cart) {
+    if (!item.productId || !Number.isInteger(item.quantity) || item.quantity < 1) {
+      throw new Error('Sepette geçersiz ürün var.');
+    }
+
+    merged.set(item.productId, (merged.get(item.productId) || 0) + item.quantity);
+  }
+
+  return Array.from(merged, ([productId, quantity]) => ({ productId, quantity }));
+}
+
+function getStartOfToday() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function getStartOfTomorrow() {
+  const date = getStartOfToday();
+  date.setDate(date.getDate() + 1);
+  return date;
+}
+
+function getOrderDateKey() {
+  const date = getStartOfToday();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+async function createDailyOrderNumber(branchId: string) {
+  const branch = await prisma.branch.findUnique({
+    where: { id: branchId },
+    select: { name: true }
+  });
+
+  if (!branch) {
+    throw new Error('Şube bulunamadı.');
+  }
+
+  const branchCode =
+    branch.name
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(0, 2)
+      .toUpperCase() || 'CF';
+
+  const start = getStartOfToday();
+  const end = getStartOfTomorrow();
+  const orderDate = getOrderDateKey();
+  let sequence = await prisma.order.count({
+    where: {
+      branchId,
+      createdAt: {
+        gte: start,
+        lt: end
+      }
+    }
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    sequence += 1;
+    const orderNumber = `${branchCode}${String(sequence).padStart(3, '0')}`;
+    const existing = await prisma.order.findFirst({
+      where: { branchId, orderDate, orderNumber }
+    });
+
+    if (!existing) {
+      return { orderNumber, orderDate };
+    }
+  }
+
+  return { orderNumber: `${branchCode}${Date.now().toString().slice(-6)}`, orderDate };
+}
 
 export async function processCheckout(data: {
   branchId: string;
   name: string;
   phone: string;
-  cart: { productId: string; quantity: number }[];
+  cart: CartItemInput[];
   totalAmount: number;
 }) {
   try {
-    // 1. Find or Create User
-    let user = await prisma.user.findUnique({ where: { phone: data.phone } });
-    
+    const name = data.name.trim();
+    const phone = normalizePhone(data.phone);
+    const cart = mergeCartItems(data.cart);
+
+    if (!name) {
+      throw new Error('Ad soyad gereklidir.');
+    }
+
+    if (cart.length === 0) {
+      throw new Error('Sepetiniz boş.');
+    }
+
+    const productIds = cart.map(item => item.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } }
+    });
+    const productMap = new Map(products.map(product => [product.id, product.price]));
+
+    if (products.length !== cart.length) {
+      throw new Error('Sepette geçersiz ürün var.');
+    }
+
+    const calculatedTotal = cart.reduce((total, item) => {
+      const price = productMap.get(item.productId);
+      if (price == null) {
+        throw new Error('Sepette geçersiz ürün var.');
+      }
+      return total + price * item.quantity;
+    }, 0);
+
+    let user = await prisma.user.findUnique({ where: { phone } });
+
     if (!user) {
       user = await prisma.user.create({
-        data: { name: data.name, phone: data.phone, stampCount: 0 }
+        data: { name, phone, stampCount: 0 }
+      });
+    } else if (user.name !== name) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { name }
       });
     }
 
-    // 2. Check for free coffee (Assuming 10 stamps = 1 free coffee of 50 TL value for simplification)
-    let finalAmount = data.totalAmount;
+    let finalAmount = calculatedTotal;
     let stampsUsed = false;
 
     if (user.stampCount >= 10) {
-      finalAmount = Math.max(0, finalAmount - 50); // Discount 50 TL
+      finalAmount = Math.max(0, finalAmount - 50);
       stampsUsed = true;
     }
 
-    // 3. Make the API Call to Iyzico
-    console.log("Final Amount:", finalAmount);
-    if (finalAmount > 0) {
-      console.log("Iyzico API Key:", process.env.IYZICO_API_KEY?.substring(0, 10) + "...");
-      const request = {
-        locale: Iyzipay.LOCALE.TR,
-        conversationId: 'COFFY' + Date.now(),
-        price: finalAmount.toString(),
-        paidPrice: finalAmount.toString(),
-        currency: Iyzipay.CURRENCY.TRY,
-        installment: '1',
-        basketId: 'B' + Date.now(),
-        paymentChannel: Iyzipay.PAYMENT_CHANNEL.WEB,
-        paymentGroup: Iyzipay.PAYMENT_GROUP.PRODUCT,
-        paymentCard: {
-            cardHolderName: data.name,
-            cardNumber: '4353000000000000', // Master Test Karti
-            expireMonth: '12',
-            expireYear: '2026',
-            cvc: '123',
-            registerCard: '0'
-        },
-        buyer: {
-            id: user.id || "BY123",
-            name: data.name.split(' ')[0] || "Deneme",
-            surname: data.name.split(' ').slice(1).join(' ') || "Kullanici",
-            gsmNumber: "+90" + data.phone,
-            email: "test@coffy.com",
-            identityNumber: "11111111111",
-            lastLoginDate: "2023-10-05 12:43:35",
-            registrationDate: "2023-04-21 15:12:09",
-            registrationAddress: "Atasehir",
-            ip: "85.34.78.112",
-            city: "Istanbul",
-            country: "Turkey",
-            zipCode: "34732"
-        },
-        shippingAddress: {
-            contactName: data.name,
-            city: "Istanbul",
-            country: "Turkey",
-            address: "Sube Teslimati",
-            zipCode: "34732"
-        },
-        billingAddress: {
-            contactName: data.name,
-            city: "Istanbul",
-            country: "Turkey",
-            address: "Sube Teslimati",
-            zipCode: "34732"
-        },
-        basketItems: [
-            {
-                id: 'BI101',
-                name: 'Coffy Siparis',
-                category1: 'Yiyecek Içecek',
-                itemType: Iyzipay.BASKET_ITEM_TYPE.PHYSICAL,
-                price: finalAmount.toString()
-            }
-        ]
-      };
-
-      console.log("Iyzico Request:", JSON.stringify(request, null, 2));
-      const iyzicoResult: any = await new Promise((resolve, reject) => {
-        iyzipay.payment.create(request, function (err, res) {
-          if (err) return reject(err);
-          resolve(res);
-        });
-      });
-      console.log("Iyzico Result Status:", iyzicoResult.status);
-      console.log("Iyzico Result:", JSON.stringify(iyzicoResult, null, 2));
-
-      if (iyzicoResult.status !== 'success') {
-         console.error("Iyzico Hatasi:", iyzicoResult);
-         throw new Error("Ödeme alınamadı: " + iyzicoResult.errorMessage);
-      }
-    }
-
-    // 4. Create Order
+    const { orderNumber, orderDate } = await createDailyOrderNumber(data.branchId);
     const order = await prisma.order.create({
       data: {
+        orderNumber,
+        orderDate,
         userId: user.id,
         branchId: data.branchId,
         totalAmount: finalAmount,
         status: 'RECEIVED',
+        paymentMethod: 'IN_STORE',
+        paymentStatus: 'PAY_AT_COUNTER',
         items: {
-          create: data.cart.map(item => ({
+          create: cart.map(item => ({
             productId: item.productId,
             quantity: item.quantity,
-            price: 0 // Fetch real price locally in real app to prevent manipulation
+            price: productMap.get(item.productId) || 0
           }))
         }
       }
     });
 
-    // 4. Update Stamps
-    // Add 1 stamp for this order. If they used 10 stamps, subtract 10.
     const newStampCount = stampsUsed ? (user.stampCount - 10 + 1) : (user.stampCount + 1);
-    
+
     await prisma.user.update({
       where: { id: user.id },
       data: { stampCount: newStampCount }
     });
 
-    return { success: true, orderId: order.id, newStampCount };
-
+    return {
+      success: true,
+      orderId: order.id,
+      orderNumber,
+      newStampCount,
+      totalAmount: finalAmount
+    };
   } catch (error) {
-    console.error('Checkout error:', error);
-    return { success: false, error: 'Checkout failed' };
+    const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+    console.error('Checkout error:', errorMessage);
+
+    return { success: false, error: errorMessage };
   }
 }
